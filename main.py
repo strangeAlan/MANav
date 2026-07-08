@@ -117,6 +117,8 @@ def main():
         graph.set_image_goal(infos['instance_imagegoal'])
     elif args.goal_type == 'text':
         graph.set_text_goal(infos['text_goal'])
+    elif args.goal_type == 'object':
+        graph.set_text_goal(infos['goal_name'])
 
     step = 0
 
@@ -149,6 +151,8 @@ def main():
                 graph.set_image_goal(infos['instance_imagegoal'])
             elif args.goal_type == 'text':
                 graph.set_text_goal(infos['text_goal'])
+            elif args.goal_type == 'object':
+                graph.set_text_goal(infos['goal_name'])
 
         BEV_map.mapping(rgbd, infos)
 

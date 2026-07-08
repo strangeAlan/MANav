@@ -66,7 +66,7 @@ fi
 log_file="${QWEN_LOG_DIR}/server-${QWEN_PORT}.log"
 pid_file="${QWEN_LOG_DIR}/server-${QWEN_PORT}.pid"
 echo "[start_local_vlm] log=${log_file}"
-CUDA_VISIBLE_DEVICES="${QWEN_GPU}" QWEN_MODEL_PATH="${QWEN_MODEL_PATH}" "${cmd[@]}" \
+nohup env CUDA_VISIBLE_DEVICES="${QWEN_GPU}" QWEN_MODEL_PATH="${QWEN_MODEL_PATH}" "${cmd[@]}" \
   > "${log_file}" 2>&1 &
 
 pid="$!"

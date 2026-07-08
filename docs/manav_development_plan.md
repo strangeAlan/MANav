@@ -67,22 +67,10 @@ feature/teamgraph-two-agent
   Add two-agent shared Graph/TeamGraph memory and coordinated exploration.
 ```
 
-Recommended first commit:
+Current branch progression:
 
-```bash
-cd /home/hsy/UniGoal
-git checkout -b local/qwen-runtime
-rm -rf logs outputs
-git add src/utils/llm.py configs/config_local_qwen.yaml script/ docs/
-git commit -m "Add MANav local Qwen runtime and development plan"
-git push -u manav local/qwen-runtime
-```
-
-After that, create the ObjectNav baseline branch:
-
-```bash
-git checkout -b baseline/objectnav-rgbd
-```
+- `local/qwen-runtime` contains the self-contained local Qwen runtime.
+- `baseline/objectnav-rgbd` adds the first RGB-D ObjectNav baseline path.
 
 ## Evaluation Target
 
@@ -199,6 +187,34 @@ Expected output of this phase:
 - A reproducible command for MP3D ObjectNav `val_mini`.
 - A committed branch `baseline/objectnav-rgbd`.
 - A short result summary committed as documentation, not raw logs.
+
+Current commands:
+
+```bash
+cd /home/hsy/UniGoal
+
+# Full ObjectNav-HM3D val_mini, 30 episodes.
+run_hm3d.sh
+
+# One HM3D episode smoke.
+EPISODE_ID=0 TIMEOUT_SECONDS=180 run_hm3d.sh
+
+# Full ObjectNav-MP3D val_mini, 30 episodes.
+run_mp3d.sh
+
+# One MP3D episode smoke.
+EPISODE_ID=0 TIMEOUT_SECONDS=180 run_mp3d.sh
+```
+
+Current caveat:
+
+- HM3D `val_mini` uses the 6 ObjectNav categories that mostly overlap the
+  current Mask R-CNN semantic prediction head.
+- MP3D `val_mini` contains categories such as `towel`, `counter`, `cabinet`,
+  and `seating`. The first RGB-D baseline currently maps these to the nearest
+  available semantic channel only to keep evaluation running. MP3D numbers from
+  this baseline should therefore be treated as a runnable baseline, not as a
+  faithful UniGoal paper reproduction.
 
 ## RGB-Only Phase: VGGT Perception
 

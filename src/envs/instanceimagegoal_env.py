@@ -51,8 +51,10 @@ class InstanceImageGoal_Env:
         goal_name = self._env.current_episode.object_category
 
         self.goal_name = goal_name
-        self.gt_goal_idx = self.name2index[goal_name]
-        self.goal_object_id = int(self._env.current_episode.goal_object_id)
+        self.gt_goal_idx = self.name2index.get(goal_name, 0)
+        self.goal_object_id = None
+        if hasattr(self._env.current_episode, 'goal_object_id'):
+            self.goal_object_id = int(self._env.current_episode.goal_object_id)
 
     def reset(self):
         """Resets the environment to a new episode.
@@ -77,7 +79,7 @@ class InstanceImageGoal_Env:
        
         obs = self._env.reset()
         self.update_after_reset()
-        if 'semantic' in obs:
+        if 'semantic' in obs and self.goal_object_id is not None:
             semantic_obs = obs['semantic']
             sem = np.where(semantic_obs == self.goal_object_id, 1, 0)
             self.semantic_obs = sem
@@ -152,7 +154,7 @@ class InstanceImageGoal_Env:
         obs = self._env.step(action)
         done = self._env.episode_over
     
-        if 'semantic' in obs:
+        if 'semantic' in obs and self.goal_object_id is not None:
             semantic_obs = obs['semantic']
             sem = np.where(semantic_obs == self.goal_object_id, 1, 0)
             self.semantic_obs = sem

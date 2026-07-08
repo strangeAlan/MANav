@@ -207,7 +207,7 @@ class UniGoal_Agent():
 
         goal_mask = self.rgbd[4+self.envs.gt_goal_idx, :, :]
 
-        if self.instance_imagegoal is None and self.text_goal is None:
+        if self.instance_imagegoal is None and self.text_goal is None and self.args.goal_type != 'object':
             # not initialized
             return planner_inputs
         elif self.global_goal is not None:
@@ -246,6 +246,8 @@ class UniGoal_Agent():
             if self.args.goal_type == 'ins-image':
                 index = self.local_feature_match_lightglue()
                 match_points = index.shape[0]
+            else:
+                match_points = 0
             planner_inputs['found_goal'] = 0
 
             if self.temp_goal is not None:
@@ -283,8 +285,8 @@ class UniGoal_Agent():
                     planner_inputs['goal'] = goal_map
                     self.temp_goal = None
                 else:
-                    if (self.args.goal_type == 'ins-image' and goal_dis < 50) or (self.args.goal_type == 'text' and goal_dis < 15):
-                        if (self.args.goal_type == 'ins-image' and match_points > 90) or self.args.goal_type == 'text':
+                    if (self.args.goal_type == 'ins-image' and goal_dis < 50) or (self.args.goal_type in {'text', 'object'} and goal_dis < 15):
+                        if (self.args.goal_type == 'ins-image' and match_points > 90) or self.args.goal_type in {'text', 'object'}:
                             planner_inputs['found_goal'] = 1
                             global_goal = np.zeros((self.global_width, self.global_height))
                             global_goal[gx1:gx2, gy1:gy2] = goal_map
@@ -323,7 +325,9 @@ class UniGoal_Agent():
                             if self.args.goal_type == 'ins-image':
                                 index = self.local_feature_match_lightglue()
                                 match_points = index.shape[0]
-                            if (self.args.goal_type == 'ins-image' and match_points < 80) or self.args.goal_type == 'text':
+                            else:
+                                match_points = 0
+                            if (self.args.goal_type == 'ins-image' and match_points < 80) or self.args.goal_type in {'text', 'object'}:
                                 planner_inputs['goal'] = planner_inputs['exp_goal']
                                 selem = skimage.morphology.disk(3)
                                 new_goal_map = skimage.morphology.dilation(new_goal_map, selem)
