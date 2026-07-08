@@ -51,7 +51,7 @@ class InstanceImageGoal_Env:
         goal_name = self._env.current_episode.object_category
 
         self.goal_name = goal_name
-        self.gt_goal_idx = self.name2index.get(goal_name, 0)
+        self.gt_goal_idx = self.name2index.get(goal_name, -1)
         self.goal_object_id = None
         if hasattr(self._env.current_episode, 'goal_object_id'):
             self.goal_object_id = int(self._env.current_episode.goal_object_id)
@@ -131,7 +131,7 @@ class InstanceImageGoal_Env:
     def set_goal_cat_id(self, idx):
         self.gt_goal_idx = idx
         self.info['goal_cat_id'] = idx
-        self.info['goal_name'] = self.index2name[idx]
+        self.info['goal_name'] = self.index2name.get(idx, self.goal_name)
 
     def step(self, action):
         """Function to take an action in the environment.

@@ -101,9 +101,10 @@ Short smoke tests were run with timeouts:
   ObjectNav-MP3D result.
 - The current semantic prediction head is COCO/Mask R-CNN based and only covers
   a subset of ObjectNav categories.
-- MP3D categories outside the current semantic head are conservatively mapped to
-  existing channels to avoid crashes. This can reduce success rate and should be
-  improved before using MP3D numbers as a serious benchmark.
+- MP3D categories outside the current semantic head, such as `towel`, are not
+  forced into incorrect COCO aliases. They are added to the graph's
+  GroundingDINO/SAM detection vocabulary and should be judged from graph
+  evidence rather than from the Mask R-CNN stop channel.
 - HM3D semantic annotations are not present in the local HM3D scene package, but
   this baseline relies mainly on RGB-D plus learned prediction for online
   behavior.

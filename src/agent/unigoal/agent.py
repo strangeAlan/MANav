@@ -177,6 +177,8 @@ class UniGoal_Agent():
     def compute_ins_goal_map(self, whwh, start, start_o):
         goal_mask = np.zeros_like(self.rgbd[3, :, :])
         goal_mask[whwh[1]:whwh[3], whwh[0]:whwh[2]] = 1
+        if self.envs.gt_goal_idx < 0:
+            return np.zeros((self.local_width, self.local_height))
         semantic_mask = (self.rgbd[4+self.envs.gt_goal_idx, :, :] > 0) & (goal_mask > 0)
 
         depth_h, depth_w = np.where(semantic_mask > 0)
@@ -205,7 +207,10 @@ class UniGoal_Agent():
                  int(c * 100.0 / self.args.map_resolution - gy1)]
         start = pu.threshold_poses(start, map_pred.shape)
 
-        goal_mask = self.rgbd[4+self.envs.gt_goal_idx, :, :]
+        if self.envs.gt_goal_idx >= 0:
+            goal_mask = self.rgbd[4+self.envs.gt_goal_idx, :, :]
+        else:
+            goal_mask = np.zeros_like(self.rgbd[3, :, :])
 
         if self.instance_imagegoal is None and self.text_goal is None and self.args.goal_type != 'object':
             # not initialized
@@ -377,7 +382,7 @@ class UniGoal_Agent():
 
 
         id_lo_whwh_speci = [id_lo_whwh[i] for i in range(len(id_lo_whwh)) \
-                    if id_lo_whwh[i][0] == self.envs.gt_goal_idx]
+                    if self.envs.gt_goal_idx >= 0 and id_lo_whwh[i][0] == self.envs.gt_goal_idx]
 
 
         agent_input["found_goal"] = (id_lo_whwh_speci != [])

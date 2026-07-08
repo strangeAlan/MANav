@@ -279,8 +279,24 @@ Please provide the relationship you can determine from the image.
         self.image_depth = observations['depth'].copy()
         self.pose_matrix = self.get_pose_matrix()
 
+    def _extend_node_space_for_goal(self, obj_goal):
+        if not isinstance(obj_goal, str) or not obj_goal.strip():
+            return
+        aliases = {
+            'couch': 'sofa',
+            'potted plant': 'plant',
+            'dining-table': 'table',
+            'tv_monitor': 'tv',
+        }
+        normalized_goal = aliases.get(obj_goal, obj_goal).replace('_', ' ').strip()
+        node_items = [item.strip() for item in self.node_space.split('.') if item.strip()]
+        if normalized_goal not in node_items:
+            node_items.append(normalized_goal)
+            self.node_space = '. '.join(node_items)
+
     def set_obj_goal(self, obj_goal):
         self.obj_goal = obj_goal
+        self._extend_node_space_for_goal(obj_goal)
 
     def set_image_goal(self, image):
         if isinstance(image, np.ndarray):

@@ -211,10 +211,11 @@ Current caveat:
 - HM3D `val_mini` uses the 6 ObjectNav categories that mostly overlap the
   current Mask R-CNN semantic prediction head.
 - MP3D `val_mini` contains categories such as `towel`, `counter`, `cabinet`,
-  and `seating`. The first RGB-D baseline currently maps these to the nearest
-  available semantic channel only to keep evaluation running. MP3D numbers from
-  this baseline should therefore be treated as a runnable baseline, not as a
-  faithful UniGoal paper reproduction.
+  and `seating`. These are not all covered by the COCO/Mask R-CNN semantic
+  prediction head used for low-level semantic stop signals. The graph path uses
+  GroundingDINO/SAM and now appends the ObjectNav target category to the graph
+  detection vocabulary, so non-COCO targets should be handled through graph
+  evidence instead of nearest-channel semantic aliases.
 
 ## RGB-Only Phase: VGGT Perception
 
