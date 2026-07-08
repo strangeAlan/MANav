@@ -1,333 +1,76 @@
 # MANav Development Plan
 
-This document records the planned code changes for developing MANav from the
-current UniGoal codebase. It is a planning document only. It should be updated
-before large implementation steps, and implementation changes should be kept in
-separate git branches.
+This project starts from the public UniGoal codebase and develops MANav as an
+RGB-only navigation stack. The current baseline branch intentionally stays on
+UniGoal's supported RGB-D tasks before any perception replacement.
 
-## Current Starting Point
+## Current Baseline
 
-The base code is the public UniGoal repository:
-
-- Upstream remote: `origin -> https://github.com/bagh2178/UniGoal.git`
-- Project remote: `manav -> git@github.com:strangeAlan/MANav.git`
-- Current public UniGoal release supports HM3D instance-image-goal navigation
-  and text-goal navigation.
-- The public code does not currently expose a complete ObjectNav-MP3D command
-  matching the UniGoal paper table result `ObjNav-MP3D SR 41.0 / SPL 16.4`.
-
-Local runtime support is included for using a local Qwen service:
-
-- Qwen server: `http://127.0.0.1:18080`
-- UniGoal local config: `configs/config_local_qwen.yaml`
-- Start script: `script/start_local_vlm.sh`
-- Smoke script: `script/run_local_qwen_smoke.sh`
-- Server script: `script/qwen_backend_server.py`
-
-The Qwen runtime changes are infrastructure only. They should be committed on a
-small branch before ObjectNav or RGB-only work begins. Deployment details are in
-`docs/local_qwen_deployment.md`.
-
-## Research Goal
-
-The project goal is not to exactly reproduce the UniGoal paper numbers first.
-The goal is to build a multi-agent navigation framework that keeps UniGoal's
-stronger navigation and graph structure while replacing online RGB-D perception
-with RGB-only reconstruction.
-
-Target direction:
-
-- Online observations should be RGB-only.
-- VGGT or an equivalent RGB-only reconstruction module should provide
-  pseudo-depth, camera geometry, and object-level 3D grounding.
-- UniGoal's scene graph should remain the main memory representation.
-- The first functional target is a single-agent ObjectNav baseline.
-- The two-agent version should be developed only after the single-agent
-  ObjectNav and RGB-only paths are stable.
-
-## Version Control Plan
-
-Keep the stages separated with branches:
+Branch:
 
 ```text
-main
-  Upstream UniGoal baseline.
+baseline/iin-tn-rgbd
+```
 
+Base branch:
+
+```text
 local/qwen-runtime
-  Local Qwen server integration, local config, startup/smoke scripts, and a
-  self-contained Qwen HTTP server wrapper.
-
-baseline/objectnav-rgbd
-  ObjectNav-HM3D and ObjectNav-MP3D RGB-D baseline support.
-
-feature/rgb-only-vggt
-  Replace online RGB-D perception with RGB-only VGGT reconstruction.
-
-feature/teamgraph-two-agent
-  Add two-agent shared Graph/TeamGraph memory and coordinated exploration.
 ```
-
-Recommended first commit:
-
-```bash
-cd /home/hsy/UniGoal
-git checkout -b local/qwen-runtime
-rm -rf logs outputs
-git add src/utils/llm.py configs/config_local_qwen.yaml script/ docs/
-git commit -m "Add MANav local Qwen runtime and development plan"
-git push -u manav local/qwen-runtime
-```
-
-After that, create the ObjectNav baseline branch:
-
-```bash
-git checkout -b baseline/objectnav-rgbd
-```
-
-## Evaluation Target
-
-The project should eventually support formal evaluation on both:
-
-- ObjectNav-HM3D
-- ObjectNav-MP3D
-
-Local datasets appear to exist under:
-
-```text
-/home/hsy/datasets/objectnav/hm3d/v2/
-/home/hsy/datasets/objectnav/mp3d/v1/
-/home/hsy/datasets/hm3d or /home/hsy/datasets/scene_datasets/hm3d_v0.2/
-/home/hsy/datasets/mp3d/
-```
-
-The first evaluation milestone should be `val_mini`, not full `val`, because
-the perception pipeline is slow and failures need to be diagnosed quickly.
-
-Evaluation order:
-
-1. HM3D ObjectNav `val_mini`, single-agent RGB-D.
-2. MP3D ObjectNav `val_mini`, single-agent RGB-D.
-3. HM3D ObjectNav `val`, single-agent RGB-D.
-4. MP3D ObjectNav `val`, single-agent RGB-D.
-5. Repeat the same sequence for RGB-only VGGT.
-6. Repeat selected `val_mini` episodes for two-agent comparison.
-
-Metrics to record:
-
-- SR
-- SPL
-- soft SPL if available
-- distance to goal
-- episode count
-- timeout/failure count
-- average wall-clock time per episode
-
-Experiment logs, videos, model files, and datasets must not be committed.
-
-## Current Local Qwen Smoke Command
-
-Use this only to test the current UniGoal release path. It evaluates
-InstanceImageNav, not ObjectNav.
-
-```bash
-cd /home/hsy/UniGoal
-
-start_local_vlm.sh
-
-TIMEOUT_SECONDS=420 \
-NAV_GPU=0 \
-EPISODE_ID=0 \
-GOAL_TYPE=ins-image \
-run_unigoal_local_qwen_smoke.sh
-```
-
-For a longer run over the configured evaluation episodes:
-
-```bash
-cd /home/hsy/UniGoal
-
-TIMEOUT_SECONDS=999999 \
-NAV_GPU=0 \
-CONFIG_FILE=configs/config_local_qwen.yaml \
-GOAL_TYPE=ins-image \
-EPISODE_ID=-1 \
-run_unigoal_local_qwen_smoke.sh
-```
-
-The result summary is written under:
-
-```text
-outputs/experiments/local_qwen_smoke/log/total.json
-```
-
-## Baseline Phase: ObjectNav RGB-D
 
 Purpose:
 
-Build a clean single-agent ObjectNav baseline before changing the perception
-modality.
+- Keep original UniGoal RGB-D navigation behavior.
+- Use local Qwen for LLM/VLM calls through the in-repo runtime.
+- Evaluate the two public UniGoal tasks:
+  - instance-image-goal navigation, `goal_type=ins-image`
+  - text-goal navigation, `goal_type=text`
 
-Scope:
+ObjectNav-HM3D/MP3D is not the current baseline target. It was explored, but the
+released UniGoal code does not expose a clean, reproducible ObjectNav-MP3D path
+that matches the reported paper result.
 
-- Add Habitat ObjectNav task configs for HM3D and MP3D.
-- Add `goal_type=object` support if missing.
-- Connect ObjectNav dataset splits:
-  - `objectnav/hm3d/v2/val_mini`
-  - `objectnav/hm3d/v2/val`
-  - `objectnav/mp3d/v1/val_mini`
-  - `objectnav/mp3d/v1/val`
-- Map Habitat object category goals to UniGoal goal graph inputs.
-- Keep UniGoal's current RGB-D sensors and BEV mapping.
-- Keep UniGoal's current low-level execution.
-- Keep local Qwen optional through config, but do not bake Qwen-specific logic
-  into ObjectNav task logic.
+## Baseline Commands
 
-Important code anchors:
+One episode:
 
-- `main.py`
-- `configs/config_habitat.yaml`
-- `configs/tasks/instance_imagenav.yaml`
-- `src/envs/__init__.py`
-- `src/envs/instanceimagegoal_env.py`
-- `src/agent/unigoal/agent.py`
-- `src/map/bev_mapping.py`
-- `src/graph/graph.py`
-
-Expected output of this phase:
-
-- A reproducible command for HM3D ObjectNav `val_mini`.
-- A reproducible command for MP3D ObjectNav `val_mini`.
-- A committed branch `baseline/objectnav-rgbd`.
-- A short result summary committed as documentation, not raw logs.
-
-## RGB-Only Phase: VGGT Perception
-
-Purpose:
-
-Replace online true depth with RGB-only pseudo-depth and reconstruction while
-preserving UniGoal's graph memory and downstream decision logic.
-
-Reference implementation:
-
-```text
-/home/hsy/multi-agent-nav/src/map/spacev6.py
-/home/hsy/multi-agent-nav/src/map/vggt/
-/home/hsy/model/mvp-nav/vggt
+```bash
+cd /home/hsy/UniGoal
+NAV_GPU=0 EPISODE_ID=0 TIMEOUT_SECONDS=600 ./script/run_iin.sh
+NAV_GPU=0 EPISODE_ID=0 TIMEOUT_SECONDS=600 ./script/run_tn.sh
 ```
 
-Target perception flow:
+Mini-eval:
 
-```text
-RGB frame buffer
-  -> VGGT pseudo-depth and camera geometry
-  -> GroundingDINO/SAM object masks
-  -> pseudo-depth object point clouds
-  -> UniGoal Graph.objects / Graph.nodes
-  -> UniGoal exploration and low-level execution
+```bash
+cd /home/hsy/UniGoal
+NAV_GPU=0 EPISODE_ID=-1 NUM_EVAL_EPISODES=10 TIMEOUT_SECONDS=7200 ./script/run_iin.sh
+NAV_GPU=0 EPISODE_ID=-1 NUM_EVAL_EPISODES=10 TIMEOUT_SECONDS=7200 ./script/run_tn.sh
 ```
 
-Do not rewrite the entire Graph first. The preferred minimal interface is:
+Runtime details are in:
 
-- Add a depth provider abstraction for `Graph.set_observations`.
-- Add a depth provider abstraction for `BEV_Map.mapping`.
-- Keep the existing `Graph.mapping3d` and `create_object_pcd` logic initially.
-- Replace `observations['depth']` with VGGT pseudo-depth only when an
-  `rgb_only` config flag is enabled.
+```text
+docs/local_qwen_deployment.md
+docs/iin_tn_rgbd_baseline.md
+```
 
-Important code anchors:
+## Next RGB-Only Branch
 
-- `src/graph/graph.py`
-  - `set_observations`
-  - `mapping3d`
-  - `update_node`
-  - `get_scenegraph`
-- `src/graph/utils/utils.py`
-  - `create_object_pcd`
-  - `gobs_to_detection_list`
-- `src/map/bev_mapping.py`
-  - `mapping`
-- MVP reference:
-  - `spacev6.py: build_pcd`
-  - VGGT model loading and pseudo-depth confidence handling
+Create a new branch from `baseline/iin-tn-rgbd` after the RGB-D baseline is
+checked:
 
-Expected output of this phase:
+```bash
+git switch baseline/iin-tn-rgbd
+git switch -c feature/rgb-only-vggt
+```
 
-- Single-agent RGB-only ObjectNav-HM3D `val_mini` run.
-- Single-agent RGB-only ObjectNav-MP3D `val_mini` run if MP3D data path is
-  stable.
-- A comparison table against `baseline/objectnav-rgbd`.
+Target changes:
 
-## Memory Direction: UniGoal Graph, Not Text GSSL
+- Replace online Habitat depth with VGGT pseudo-depth or reconstructed depth.
+- Preserve RGB-only online policy inputs.
+- Keep UniGoal's graph memory and downstream navigation logic first.
+- Validate against the same IIN/TN episode set used by the RGB-D baseline.
 
-Use UniGoal's graph memory as the base shared representation.
-
-Preferred shared entity fields:
-
-- stable entity id
-- caption/category
-- 3D center
-- OBB or bbox
-- confidence
-- number of observations
-- source agent
-- first seen step
-- last seen step
-- status
-- optional relation edges
-
-Avoid using long natural-language GSSL strings as the main memory. They grow too
-quickly and make cross-agent deduplication difficult.
-
-The cross-agent merge rule should start conservatively:
-
-- same or compatible category
-- close 3D center after coordinate alignment
-- overlapping or nearby OBB
-- sufficient observation confidence
-
-## Two-Agent Phase
-
-The first two-agent version should be simple and controlled.
-
-Initial assumptions:
-
-- Start from the single-agent RGB-only ObjectNav stack.
-- Use two environment instances or two synchronized runners first.
-- Share object-centric Graph/TeamGraph memory.
-- Focus on reducing duplicate exploration and improving target discovery.
-- Do not prioritize physical robot-robot collision handling in the first
-  version.
-
-Two-agent coordination should initially operate at the long-term goal level:
-
-- each agent updates local graph
-- local objects are merged into TeamGraph
-- TeamGraph selects or biases frontier/goal assignment
-- agents avoid selecting the same explored region when alternatives exist
-
-The two-agent branch should not be started until single-agent RGB-only runs are
-stable enough to compare.
-
-## Known Risks
-
-- The current UniGoal public release does not directly support ObjectNav in the
-  exposed README command path.
-- VGGT inference is likely to be slow and memory-heavy.
-- GroundingDINO/SAM plus graph update is already expensive in RGB-D mode.
-- HM3D and MP3D ObjectNav category definitions may not align exactly with
-  current `configs/categories.py`.
-- MP3D semantic assets and Habitat 0.2.3 compatibility must be verified before
-  relying on MP3D full evaluation.
-- Replacing depth in Graph alone is insufficient; BEV mapping also depends on
-  depth and must be handled.
-
-## Immediate Next Tasks
-
-1. Commit the local Qwen runtime and this planning document on
-   `local/qwen-runtime`.
-2. Create `baseline/objectnav-rgbd`.
-3. Audit Habitat ObjectNav configs available in `third_party/habitat-lab`.
-4. Add a minimal ObjectNav-HM3D `val_mini` config.
-5. Make `goal_type=object` run through UniGoal's goal graph path.
-6. Run one HM3D ObjectNav episode and inspect metrics.
-7. Only after this baseline works, begin RGB-only VGGT design.
+The first RGB-only pass should be single-agent only. Multi-agent shared graph
+memory should come after the single-agent RGB-only path is stable.
