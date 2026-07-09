@@ -89,6 +89,16 @@ lingbot_mapping_min_depth_m: 0.35
 lingbot_mapping_max_depth_m: 5.0
 lingbot_mapping_confidence_threshold: 0.0
 lingbot_mapping_invalid_fill_m: 5.0
+lingbot_mapping_conservative: true
+lingbot_mapping_median_blur: true
+lingbot_mapping_median_kernel: 5
+lingbot_mapping_floor_clear_start: 0.58
+lingbot_mapping_floor_near_threshold_m: 0.65
+lingbot_mapping_floor_fill_m: 2.5
+lingbot_mapping_floor_fill_ramp_m: 1.0
+lingbot_mapping_low_confidence_unknown_threshold: 0.0
+lingbot_bev_map_debug: true
+lingbot_bev_map_debug_interval: 20
 lingbot_object_goal_grounding: true
 lingbot_object_depth_scale: 0.65
 lingbot_object_confidence_threshold: 0.0

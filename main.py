@@ -151,6 +151,31 @@ def main():
                 graph.set_text_goal(infos['text_goal'])
 
         BEV_map.mapping(rgbd, infos)
+        if getattr(args, "lingbot_bev_map_debug", False) and step % int(getattr(args, "lingbot_bev_map_debug_interval", 20)) == 0:
+            occ = BEV_map.local_map[0, 0].detach().cpu().numpy()
+            exp = BEV_map.local_map[0, 1].detach().cpu().numpy()
+            cur_r = int(getattr(BEV_map, "local_row", -1))
+            cur_c = int(getattr(BEV_map, "local_col", -1))
+            r1, r2 = max(0, cur_r - 20), min(occ.shape[0], cur_r + 21)
+            c1, c2 = max(0, cur_c - 20), min(occ.shape[1], cur_c + 21)
+            local_occ = occ[r1:r2, c1:c2]
+            local_exp = exp[r1:r2, c1:c2]
+            map_message = (
+                "[BEVMapDebug] step={} cur=({}, {}) occ_mean={:.4f} exp_mean={:.4f} "
+                "occ_cells={} exp_cells={} local_occ_mean={:.4f} local_exp_mean={:.4f}"
+            ).format(
+                step,
+                cur_r,
+                cur_c,
+                float(np.mean(occ)),
+                float(np.mean(exp)),
+                int(np.sum(occ > 0.5)),
+                int(np.sum(exp > 0.5)),
+                float(np.mean(local_occ)) if local_occ.size else float("nan"),
+                float(np.mean(local_exp)) if local_exp.size else float("nan"),
+            )
+            print(map_message)
+            logging.info(map_message)
 
         navigate_steps = global_step * args.num_local_steps + local_step
         graph.set_navigate_steps(navigate_steps)

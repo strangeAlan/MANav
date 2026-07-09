@@ -175,7 +175,37 @@ class UniGoal_Agent():
         if confidence is not None and conf_thr > 0:
             valid &= confidence >= conf_thr
         depth = np.where(valid, depth, fill_m)
+        if getattr(self.args, "lingbot_mapping_conservative", False):
+            depth = self._make_lingbot_conservative_mapping_depth(depth, confidence, min_m, max_m, fill_m)
         return np.clip(depth, min_m, max_m).astype(np.float32)
+
+    def _make_lingbot_conservative_mapping_depth(self, depth, confidence, min_m, max_m, fill_m):
+        depth = np.asarray(depth, dtype=np.float32).copy()
+        if getattr(self.args, "lingbot_mapping_median_blur", False):
+            kernel = int(getattr(self.args, "lingbot_mapping_median_kernel", 5))
+            if kernel > 1 and kernel % 2 == 1:
+                depth = cv2.medianBlur(depth, kernel)
+
+        h, w = depth.shape[:2]
+        row_start = int(float(getattr(self.args, "lingbot_mapping_floor_clear_start", 0.58)) * h)
+        near_thr = float(getattr(self.args, "lingbot_mapping_floor_near_threshold_m", 0.65))
+        floor_fill_m = float(getattr(self.args, "lingbot_mapping_floor_fill_m", 2.5))
+        if 0 <= row_start < h:
+            row_ids = np.arange(h, dtype=np.float32)[:, None]
+            ramp = np.clip((row_ids - row_start) / max(float(h - row_start), 1.0), 0.0, 1.0)
+            floor_fill = floor_fill_m + ramp * float(getattr(self.args, "lingbot_mapping_floor_fill_ramp_m", 1.0))
+            floor_fill = np.repeat(floor_fill, w, axis=1)
+            floor_region = row_ids >= row_start
+            near_floor = floor_region & (depth < near_thr)
+            depth = np.where(near_floor, floor_fill, depth)
+
+        if confidence is not None:
+            low_conf_thr = float(getattr(self.args, "lingbot_mapping_low_confidence_unknown_threshold", 0.0))
+            if low_conf_thr > 0:
+                low_conf = confidence < low_conf_thr
+                depth = np.where(low_conf, fill_m, depth)
+
+        return np.clip(depth, min_m, max_m)
 
     def _compare_lingbot_to_habitat_depth(self, habitat_depth, pred_depth_m):
         if not getattr(self.args, "lingbot_compare_habitat_depth", False):
