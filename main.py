@@ -13,6 +13,8 @@ from src.envs import construct_envs
 from src.agent.unigoal.agent import UniGoal_Agent
 from src.map.bev_mapping import BEV_Map
 from src.graph.graph import Graph
+from src.memory.sparse_scene_memory import SparseSceneMemory
+from src.perception.lingbot_depth_client import LingBotDepthClient
 import gzip
 
 def get_config():
@@ -81,9 +83,32 @@ def main():
     graph = Graph(args)
     envs = construct_envs(args)
     agent = UniGoal_Agent(args, envs)
+    sparse_memory = None
+    sparse_depth_client = None
+    if getattr(args, "sparse_lingbot_graph", False):
+        sparse_memory = SparseSceneMemory(
+            args,
+            llm=graph.llm if getattr(args, "sparse_memory_use_vlm_hint", False) else None,
+        )
+        if getattr(args, "sparse_memory_use_lingbot_depth", True):
+            sparse_depth_client = LingBotDepthClient(
+                base_url=getattr(args, "lingbot_depth_url", "http://127.0.0.1:18180"),
+                timeout=float(getattr(args, "lingbot_depth_timeout", 180.0)),
+                min_depth_m=float(getattr(args, "lingbot_min_depth_m", 0.2)),
+                max_depth_m=float(getattr(args, "lingbot_max_depth_m", args.max_depth)),
+                scale=float(getattr(args, "lingbot_depth_scale", 1.0)),
+                confidence_threshold=float(getattr(args, "lingbot_confidence_threshold", 0.0)),
+                invalid_fill_m=float(getattr(args, "lingbot_invalid_fill_m", args.max_depth)),
+                max_jump_m=float(getattr(args, "lingbot_max_jump_m", 0.0)),
+                temporal_alpha=float(getattr(args, "lingbot_temporal_alpha", 0.0)),
+            )
 
     BEV_map.init_map_and_pose()
     obs, rgbd, infos = agent.reset()
+    if sparse_memory is not None:
+        sparse_memory.reset(infos.get("goal_name", ""))
+        if sparse_depth_client is not None:
+            sparse_depth_client.reset()
 
     BEV_map.mapping(rgbd, infos)
 
@@ -149,8 +174,37 @@ def main():
                 graph.set_image_goal(infos['instance_imagegoal'])
             elif args.goal_type == 'text':
                 graph.set_text_goal(infos['text_goal'])
+            if sparse_memory is not None:
+                sparse_memory.reset(infos.get("goal_name", ""))
+                if sparse_depth_client is not None:
+                    sparse_depth_client.reset()
 
         BEV_map.mapping(rgbd, infos)
+        if sparse_memory is not None and not wait_env:
+            sparse_memory.update_pose(step, BEV_map.full_pose[0].detach().cpu().numpy(), args.map_resolution)
+            update_interval = int(getattr(args, "sparse_memory_update_interval", 5))
+            if update_interval <= 0 or step % update_interval == 0:
+                depth_result = None
+                if sparse_depth_client is not None and getattr(agent, "raw_obs", None) is not None:
+                    try:
+                        depth_result = sparse_depth_client.predict(agent.raw_obs.astype(np.uint8))
+                    except Exception as exc:
+                        logging.info("[SparseMemory] LingBot side depth failed at step %s: %s", step, exc)
+                sparse_memory.update_observation(
+                    step=step,
+                    rgb=getattr(agent, "raw_obs", None),
+                    detections=getattr(agent, "pred_box", []),
+                    depth_m=None if depth_result is None else depth_result.depth_m,
+                    confidence=None if depth_result is None else depth_result.confidence,
+                )
+                sparse_memory.maybe_update_vlm_hint(step)
+                if getattr(args, "sparse_memory_log", False):
+                    logging.info(
+                        "[SparseMemory] step=%s stable=%s preferred=%s",
+                        step,
+                        sparse_memory.memory_prompt_items()[:8],
+                        sparse_memory.vlm_preferred_labels,
+                    )
 
         navigate_steps = global_step * args.num_local_steps + local_step
         graph.set_navigate_steps(navigate_steps)
@@ -172,6 +226,27 @@ def main():
             graph.set_full_map(BEV_map.full_map)
             graph.set_full_pose(BEV_map.full_pose)
             goal = graph.explore()
+            if (
+                sparse_memory is not None
+                and getattr(args, "sparse_memory_frontier_bias", False)
+                and hasattr(graph, "frontier_locations_16")
+            ):
+                biased_goal = sparse_memory.choose_frontier(
+                    graph.frontier_locations_16,
+                    BEV_map.full_pose[0].detach().cpu().numpy(),
+                    args.map_resolution,
+                    default_goal=goal,
+                )
+                if biased_goal is not None:
+                    if getattr(args, "sparse_memory_log", False):
+                        message = "[SparseMemory] step={} frontier_bias goal={} -> {}".format(
+                            step,
+                            goal.tolist() if hasattr(goal, "tolist") else goal,
+                            biased_goal.tolist() if hasattr(biased_goal, "tolist") else biased_goal,
+                        )
+                        print(message)
+                        logging.info(message)
+                    goal = biased_goal
             if hasattr(graph, 'frontier_locations_16'):
                 graph.frontier_locations_16[:, 0] = graph.frontier_locations_16[:, 0] - BEV_map.local_map_boundary[0, 0]
                 graph.frontier_locations_16[:, 1] = graph.frontier_locations_16[:, 1] - BEV_map.local_map_boundary[0, 2]
