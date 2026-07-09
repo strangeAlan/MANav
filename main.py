@@ -247,6 +247,12 @@ def main():
                         print(message)
                         logging.info(message)
                     goal = biased_goal
+                elif getattr(args, "sparse_memory_log", False):
+                    message = "[SparseMemory] step={} frontier_bias skipped goal={}".format(
+                        step,
+                        goal.tolist() if hasattr(goal, "tolist") else goal,
+                    )
+                    logging.info(message)
             if hasattr(graph, 'frontier_locations_16'):
                 graph.frontier_locations_16[:, 0] = graph.frontier_locations_16[:, 0] - BEV_map.local_map_boundary[0, 0]
                 graph.frontier_locations_16[:, 1] = graph.frontier_locations_16[:, 1] - BEV_map.local_map_boundary[0, 2]

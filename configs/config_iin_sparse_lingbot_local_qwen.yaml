@@ -74,6 +74,8 @@ sparse_lingbot_graph: true
 sparse_memory_use_lingbot_depth: true
 sparse_memory_use_vlm_hint: true
 sparse_memory_frontier_bias: true
+sparse_memory_require_default_goal: true
+sparse_memory_max_bias_distance_cells: 70.0
 sparse_memory_update_interval: 5
 sparse_memory_vlm_hint_interval: 80
 sparse_memory_log: true
@@ -82,6 +84,7 @@ sparse_memory_merge_bearing_deg: 25.0
 sparse_memory_stable_count: 2
 sparse_memory_entity_history: 10
 sparse_memory_recent_positions: 80
+sparse_memory_recent_goals: 24
 sparse_memory_depth_scale: 1.0
 sparse_memory_depth_confidence_threshold: 0.0
 

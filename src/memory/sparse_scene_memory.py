@@ -57,6 +57,7 @@ class SparseSceneMemory:
         self.index2name = {v: k for k, v in name2index.items()}
         self.entities: Dict[str, SparseObjectEntity] = {}
         self.recent_positions: List[Tuple[int, int, int]] = []
+        self.recent_goals: List[Tuple[int, int, int]] = []
         self.next_id = 0
         self.goal_name = ""
         self.vlm_preferred_labels: List[str] = []
@@ -65,6 +66,7 @@ class SparseSceneMemory:
     def reset(self, goal_name: str = ""):
         self.entities.clear()
         self.recent_positions.clear()
+        self.recent_goals.clear()
         self.next_id = 0
         self.goal_name = goal_name or ""
         self.vlm_preferred_labels = self._default_related_labels(self.goal_name)
@@ -152,6 +154,8 @@ class SparseSceneMemory:
     ) -> Optional[np.ndarray]:
         if frontier_locations is None or len(frontier_locations) == 0:
             return None
+        if default_goal is None and getattr(self.args, "sparse_memory_require_default_goal", True):
+            return None
         pose = np.asarray(current_full_pose, dtype=np.float32).reshape(-1)
         if len(pose) < 2:
             return None
@@ -167,6 +171,7 @@ class SparseSceneMemory:
         dist = np.sqrt(drow ** 2 + dcol ** 2)
         scores += np.clip(dist / 80.0, 0.0, 1.5)
 
+        valid_mask = np.ones((len(frontiers),), dtype=bool)
         if default_goal is not None:
             default_goal = np.asarray(default_goal, dtype=np.float32).reshape(-1)
             if len(default_goal) >= 2:
@@ -174,11 +179,19 @@ class SparseSceneMemory:
                     (frontiers[:, 0] - default_goal[0]) ** 2
                     + (frontiers[:, 1] - default_goal[1]) ** 2
                 )
+                max_bias_dist = float(getattr(self.args, "sparse_memory_max_bias_distance_cells", 70.0))
+                valid_mask &= default_dist <= max_bias_dist
                 scores += 1.0 / (1.0 + default_dist / 30.0)
+        if not np.any(valid_mask):
+            return None
 
         for _, row, col in self.recent_positions[-30:]:
             recent_dist = np.sqrt((frontiers[:, 0] - row) ** 2 + (frontiers[:, 1] - col) ** 2)
             scores -= np.clip(1.0 - recent_dist / 35.0, 0.0, 1.0) * 0.7
+
+        for _, row, col in self.recent_goals[-12:]:
+            recent_goal_dist = np.sqrt((frontiers[:, 0] - row) ** 2 + (frontiers[:, 1] - col) ** 2)
+            scores -= np.clip(1.0 - recent_goal_dist / 45.0, 0.0, 1.0) * 1.2
 
         preferred_bearings = self._preferred_bearings()
         if preferred_bearings:
@@ -187,8 +200,14 @@ class SparseSceneMemory:
                 diff = np.abs(((frontier_bearings - bearing + 180.0) % 360.0) - 180.0)
                 scores += np.clip(1.0 - diff / 70.0, 0.0, 1.0) * 0.8
 
+        scores[~valid_mask] = -np.inf
         idx = int(np.argmax(scores))
-        return frontiers[idx].astype(np.int32)
+        goal = frontiers[idx].astype(np.int32)
+        self.recent_goals.append((len(self.recent_goals), int(goal[0]), int(goal[1])))
+        max_goals = int(getattr(self.args, "sparse_memory_recent_goals", 24))
+        if len(self.recent_goals) > max_goals:
+            self.recent_goals = self.recent_goals[-max_goals:]
+        return goal
 
     def memory_prompt_items(self) -> List[str]:
         stable = [entity for entity in self.entities.values() if entity.status == "stable"]
