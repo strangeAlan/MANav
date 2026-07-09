@@ -71,4 +71,5 @@ outputs/experiments/tn_rgbd_local_qwen/
 ObjectNav-MP3D is postponed because the public UniGoal code path and available
 category/stop logic do not cleanly reproduce the reported ObjectNav-MP3D result.
 IIN and TN are the two tasks explicitly supported by the released code, so they
-are a better control baseline for later RGB-only/VGGT changes.
+are a better control baseline for later RGB-only/LingBot-Map streaming
+reconstruction changes.
