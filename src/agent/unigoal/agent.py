@@ -114,12 +114,27 @@ class UniGoal_Agent():
         )
         if self.depth_log_interval > 0 and self.depth_client.step % self.depth_log_interval == 0:
             stats = result.stats
+            compare_stats = self._compare_lingbot_to_habitat_depth(obs.get('depth'), result.depth_m)
+            compare_text = ""
+            if compare_stats:
+                compare_text = (
+                    " gt_med={gt_med:.3f}m pred_med={pred_med:.3f}m "
+                    "median_scale={scale:.2f} mae_scaled={mae:.3f}m "
+                    "rmse_scaled={rmse:.3f}m absrel_scaled={absrel:.3f}"
+                ).format(
+                    gt_med=compare_stats["gt_median_m"],
+                    pred_med=compare_stats["pred_median_m"],
+                    scale=compare_stats["median_scale"],
+                    mae=compare_stats["mae_scaled_m"],
+                    rmse=compare_stats["rmse_scaled_m"],
+                    absrel=compare_stats["absrel_scaled"],
+                )
             depth_norm = depth_obs[:, :, 0]
             message = (
                 "[LingBotDepth] step={step} ready={ready} "
                 "raw_mean={raw_mean:.3f}m depth_mean={depth_mean:.3f}m "
                 "depth_min={depth_min:.3f}m depth_max={depth_max:.3f}m "
-                "conf_mean={conf_mean:.3f} invalid={invalid:.3f} norm_mean={norm_mean:.4f}"
+                "conf_mean={conf_mean:.3f} invalid={invalid:.3f} norm_mean={norm_mean:.4f}{compare}"
             ).format(
                 step=self.depth_client.step,
                 ready=result.ready,
@@ -130,10 +145,59 @@ class UniGoal_Agent():
                 conf_mean=stats.get("conf_mean", float("nan")),
                 invalid=stats.get("invalid_ratio", float("nan")),
                 norm_mean=float(np.nanmean(depth_norm)),
+                compare=compare_text,
             )
             print(message)
             logging.info(message)
         return depth_obs.astype(np.float32)
+
+    def _compare_lingbot_to_habitat_depth(self, habitat_depth, pred_depth_m):
+        if not getattr(self.args, "lingbot_compare_habitat_depth", False):
+            return None
+        if habitat_depth is None:
+            return None
+
+        gt = np.asarray(habitat_depth, dtype=np.float32)
+        if gt.ndim == 3:
+            gt = gt[:, :, 0]
+        pred = np.asarray(pred_depth_m, dtype=np.float32)
+        if pred.shape != gt.shape:
+            return None
+
+        if np.nanmax(gt) <= 1.01:
+            gt_valid = (gt > 0.0) & (gt < 0.99)
+            gt_m = float(self.args.min_depth) + gt * float(self.args.max_depth)
+        else:
+            gt_valid = gt > 0.0
+            gt_m = gt
+
+        valid = (
+            gt_valid
+            & np.isfinite(gt_m)
+            & np.isfinite(pred)
+            & (gt_m > 0.05)
+            & (gt_m < float(self.args.max_depth))
+            & (pred > 0.01)
+        )
+        if valid.sum() < 100:
+            return None
+
+        gt_v = gt_m[valid]
+        pred_v = pred[valid]
+        pred_med = float(np.median(pred_v))
+        if pred_med <= 1e-6:
+            return None
+        scale = float(np.median(gt_v) / pred_med)
+        pred_scaled = pred_v * scale
+        err = pred_scaled - gt_v
+        return {
+            "gt_median_m": float(np.median(gt_v)),
+            "pred_median_m": pred_med,
+            "median_scale": scale,
+            "mae_scaled_m": float(np.mean(np.abs(err))),
+            "rmse_scaled_m": float(np.sqrt(np.mean(err ** 2))),
+            "absrel_scaled": float(np.mean(np.abs(err) / np.maximum(gt_v, 1e-3))),
+        }
 
     def reset(self):
         args = self.args

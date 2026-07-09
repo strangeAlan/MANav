@@ -82,4 +82,5 @@ lingbot_invalid_fill_m: 30.0
 lingbot_max_jump_m: 0.0
 lingbot_temporal_alpha: 0.0
 lingbot_log_interval: 10
+lingbot_compare_habitat_depth: true
 lingbot_map_debug: true
