@@ -89,6 +89,54 @@ The minimum UniGoal integration only replaces online `obs['depth']`. The
 advanced integration uses object masks plus depth/world points for object-level
 grounding.
 
+## Current Prototype
+
+Branch:
+
+```text
+feature/rgb-only-lingbot-stream
+```
+
+Implemented pieces:
+
+- `script/lingbot_depth_server.py`
+- `script/start_lingbot_depth_server.sh`
+- `script/stop_lingbot_depth_server.sh`
+- `src/perception/lingbot_depth_client.py`
+- `configs/config_iin_lingbot_local_qwen.yaml`
+- `script/run_iin_lingbot.sh`
+
+Start the depth server manually:
+
+```bash
+cd /home/hsy/UniGoal
+RUN_IN_BACKGROUND=1 LINGBOT_GPU=0 ./script/start_lingbot_depth_server.sh
+```
+
+Stop it:
+
+```bash
+cd /home/hsy/UniGoal
+./script/stop_lingbot_depth_server.sh
+```
+
+Run a one-episode RGB-only IIN smoke:
+
+```bash
+cd /home/hsy/UniGoal
+NAV_GPU=0 EPISODE_ID=0 TIMEOUT_SECONDS=900 ./script/run_iin_lingbot.sh
+```
+
+The wrapper follows "who starts it stops it" for LingBot-Map. If it has to
+start the depth server, it stops it on exit. If the server was already running,
+it leaves it running.
+
+The current server is intentionally conservative: it keeps a short recent RGB
+history and reruns LingBot-Map streaming inference over that history for each
+request, returning the latest frame's depth and confidence. This is slower than
+a true persistent KV-cache server, but it is simpler for validating the UniGoal
+integration path first.
+
 ## Important Constraints
 
 - Do not use Habitat true depth when `rgb_only` mode is enabled.
@@ -106,3 +154,17 @@ grounding.
 - Depth confidence thresholds for BEV safety.
 - Stability of object centers/OBBs from mask-filtered points.
 - Runtime and GPU memory with local Qwen also running.
+
+## Validation So Far
+
+- LingBot-Map environment imports passed with:
+  - `torch 2.8.0+cu128`
+  - `torchvision 0.23.0+cu128`
+  - `flashinfer 0.6.14`
+  - `lingbot_map`
+- SDPA streaming sanity check passed on 8 frames from
+  `/home/hsy/lingbot-map/example/loop`.
+- FlashInfer backend failed because no `nvcc`/CUDA toolkit path was available;
+  use SDPA for the first integration pass.
+- HTTP depth server returned 480x640 metric depth and confidence maps to the
+  UniGoal environment.

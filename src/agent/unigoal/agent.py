@@ -23,6 +23,7 @@ from src.utils.visualization.visualization import (
 )
 from src.utils.visualization.save import save_video
 from src.utils.llm import LLM
+from src.perception.lingbot_depth_client import LingBotDepthClient
 
 from lightglue import LightGlue, SuperPoint, DISK
 from lightglue.utils import load_image, rbd, match_pair , numpy_image_to_torch
@@ -47,6 +48,7 @@ class UniGoal_Agent():
         self.selem = skimage.morphology.disk(3)
 
         self.rgbd = None
+        self.depth_client = None
         self.obs_shape = None
         self.collision_map = None
         self.visited = None
@@ -85,10 +87,33 @@ class UniGoal_Agent():
             self.rgb_vis = None
             self.vis_image_list = []
 
+        if getattr(args, "rgb_only", False) and getattr(args, "depth_provider", "") == "lingbot":
+            self.depth_client = LingBotDepthClient(
+                base_url=getattr(args, "lingbot_depth_url", "http://127.0.0.1:18180"),
+                timeout=float(getattr(args, "lingbot_depth_timeout", 180.0)),
+                min_depth_m=float(getattr(args, "lingbot_min_depth_m", 0.2)),
+                max_depth_m=float(getattr(args, "lingbot_max_depth_m", args.max_depth)),
+                scale=float(getattr(args, "lingbot_depth_scale", 1.0)),
+            )
+
+    def _online_depth_obs(self, obs):
+        if self.depth_client is None:
+            return obs['depth']
+        rgb = obs['rgb'].astype(np.uint8)
+        result = self.depth_client.predict(rgb)
+        depth_obs = self.depth_client.metric_depth_to_habitat_obs(
+            result.depth_m,
+            min_d=self.args.min_depth,
+            max_d=self.args.max_depth,
+        )
+        return depth_obs.astype(np.float32)
+
     def reset(self):
         args = self.args
 
         obs, info = self.envs.reset()
+        if self.depth_client is not None:
+            self.depth_client.reset()
 
         if self.args.goal_type == 'ins-image':
             self.instance_imagegoal = self.envs.instance_imagegoal
@@ -98,7 +123,8 @@ class UniGoal_Agent():
         if idx is not None:
             self.envs.set_goal_cat_id(idx)
 
-        rgbd = np.concatenate((obs['rgb'].astype(np.uint8), obs['depth']), axis=2).transpose(2, 0, 1)
+        online_depth = self._online_depth_obs(obs)
+        rgbd = np.concatenate((obs['rgb'].astype(np.uint8), online_depth), axis=2).transpose(2, 0, 1)
         self.raw_obs = rgbd[:3, :, :].transpose(1, 2, 0)
         self.raw_depth = rgbd[3:4, :, :]
 
@@ -388,7 +414,8 @@ class UniGoal_Agent():
         if action >= 0:
             action = {'action': action}
             obs, done, info = self.envs.step(action)
-            rgbd = np.concatenate((obs['rgb'].astype(np.uint8), obs['depth']), axis=2).transpose(2, 0, 1)
+            online_depth = self._online_depth_obs(obs)
+            rgbd = np.concatenate((obs['rgb'].astype(np.uint8), online_depth), axis=2).transpose(2, 0, 1)
             self.raw_obs = rgbd[:3, :, :].transpose(1, 2, 0)
             self.raw_depth = rgbd[3:4, :, :]
 

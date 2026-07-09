@@ -125,3 +125,11 @@ Validation before code integration:
   sequence.
 - Check whether depth has usable metric scale after alignment.
 - Inspect whether object-mask points can produce stable centers/OBBs.
+
+Current first implementation target:
+
+- Use LingBot-Map as an HTTP depth provider.
+- Replace UniGoal online `obs['depth']` only when `rgb_only=true` and
+  `depth_provider=lingbot`.
+- Keep Habitat depth behavior as the default.
+- Validate on one IIN episode before changing graph/object memory code.
