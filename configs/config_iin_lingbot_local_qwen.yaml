@@ -84,3 +84,12 @@ lingbot_temporal_alpha: 0.0
 lingbot_log_interval: 10
 lingbot_compare_habitat_depth: true
 lingbot_map_debug: true
+lingbot_mapping_depth_scale: 0.65
+lingbot_mapping_min_depth_m: 0.35
+lingbot_mapping_max_depth_m: 5.0
+lingbot_mapping_confidence_threshold: 0.0
+lingbot_mapping_invalid_fill_m: 5.0
+lingbot_object_goal_grounding: true
+lingbot_object_depth_scale: 0.65
+lingbot_object_confidence_threshold: 0.0
+lingbot_object_goal_log: true

@@ -61,6 +61,9 @@ class UniGoal_Agent():
         self.count_forward_actions = None
         self.instance_imagegoal = None
         self.text_goal = None
+        self.lingbot_object_depth_m = None
+        self.lingbot_confidence = None
+        self.lingbot_target_observation_count = 0
 
         self.extractor = DISK(max_num_keypoints=2048).eval().to(self.device)
         self.matcher = LightGlue(features='disk').eval().to(self.device)
@@ -107,8 +110,11 @@ class UniGoal_Agent():
             return obs['depth']
         rgb = obs['rgb'].astype(np.uint8)
         result = self.depth_client.predict(rgb)
+        self.lingbot_object_depth_m = result.depth_m
+        self.lingbot_confidence = result.confidence
+        map_depth_m = self._make_lingbot_mapping_depth(result.depth_m, result.confidence)
         depth_obs = self.depth_client.metric_depth_to_habitat_obs(
-            result.depth_m,
+            map_depth_m,
             min_d=self.args.min_depth,
             max_d=self.args.max_depth,
         )
@@ -134,7 +140,8 @@ class UniGoal_Agent():
                 "[LingBotDepth] step={step} ready={ready} "
                 "raw_mean={raw_mean:.3f}m depth_mean={depth_mean:.3f}m "
                 "depth_min={depth_min:.3f}m depth_max={depth_max:.3f}m "
-                "conf_mean={conf_mean:.3f} invalid={invalid:.3f} norm_mean={norm_mean:.4f}{compare}"
+                "conf_mean={conf_mean:.3f} invalid={invalid:.3f} "
+                "map_mean={map_mean:.3f}m norm_mean={norm_mean:.4f}{compare}"
             ).format(
                 step=self.depth_client.step,
                 ready=result.ready,
@@ -144,12 +151,27 @@ class UniGoal_Agent():
                 depth_max=stats.get("depth_max_m", float("nan")),
                 conf_mean=stats.get("conf_mean", float("nan")),
                 invalid=stats.get("invalid_ratio", float("nan")),
+                map_mean=float(np.nanmean(map_depth_m)),
                 norm_mean=float(np.nanmean(depth_norm)),
                 compare=compare_text,
             )
             print(message)
             logging.info(message)
         return depth_obs.astype(np.float32)
+
+    def _make_lingbot_mapping_depth(self, depth_m, confidence):
+        depth = np.asarray(depth_m, dtype=np.float32).copy()
+        scale = float(getattr(self.args, "lingbot_mapping_depth_scale", 1.0))
+        min_m = float(getattr(self.args, "lingbot_mapping_min_depth_m", 0.35))
+        max_m = float(getattr(self.args, "lingbot_mapping_max_depth_m", 6.0))
+        conf_thr = float(getattr(self.args, "lingbot_mapping_confidence_threshold", 0.0))
+        fill_m = float(getattr(self.args, "lingbot_mapping_invalid_fill_m", max_m))
+        depth *= scale
+        valid = np.isfinite(depth)
+        if confidence is not None and conf_thr > 0:
+            valid &= confidence >= conf_thr
+        depth = np.where(valid, depth, fill_m)
+        return np.clip(depth, min_m, max_m).astype(np.float32)
 
     def _compare_lingbot_to_habitat_depth(self, habitat_depth, pred_depth_m):
         if not getattr(self.args, "lingbot_compare_habitat_depth", False):
@@ -245,6 +267,7 @@ class UniGoal_Agent():
         self.been_stuck = False
         self.stuck_goal = None
         self.frontier_vis = None
+        self.lingbot_target_observation_count = 0
 
         if args.visualize:
             self.vis_image_background = init_vis_image(self.envs.goal_name, self.args)
@@ -297,7 +320,12 @@ class UniGoal_Agent():
         semantic_mask = (self.rgbd[4+self.envs.gt_goal_idx, :, :] > 0) & (goal_mask > 0)
 
         depth_h, depth_w = np.where(semantic_mask > 0)
-        goal_dis = self.rgbd[3, :, :][depth_h, depth_w] / self.args.map_resolution
+        if getattr(self.args, "lingbot_object_goal_grounding", False):
+            goal_dis = self._compute_lingbot_object_goal_distance(semantic_mask, whwh)
+        else:
+            goal_dis = self.rgbd[3, :, :][depth_h, depth_w] / self.args.map_resolution
+        if goal_dis is None or len(goal_dis) == 0:
+            return np.zeros((self.local_width, self.local_height))
 
         goal_angle = -self.args.hfov / 2 * (depth_w - self.rgbd.shape[2]/2) \
         / (self.rgbd.shape[2]/2)
@@ -308,6 +336,47 @@ class UniGoal_Agent():
         goal[1] = np.clip(goal[1], 0, 240-1).astype(int)
         goal_map[goal[0], goal[1]] = 1
         return goal_map
+
+    def _compute_lingbot_object_goal_distance(self, semantic_mask, whwh):
+        if self.lingbot_object_depth_m is None:
+            return None
+        mask = np.zeros(self.lingbot_object_depth_m.shape, dtype=bool)
+        scale_y = self.lingbot_object_depth_m.shape[0] / max(float(self.rgbd.shape[1]), 1.0)
+        scale_x = self.lingbot_object_depth_m.shape[1] / max(float(self.rgbd.shape[2]), 1.0)
+        ys, xs = np.where(semantic_mask > 0)
+        if len(xs) == 0:
+            return None
+        yy = np.clip((ys * scale_y).astype(int), 0, mask.shape[0] - 1)
+        xx = np.clip((xs * scale_x).astype(int), 0, mask.shape[1] - 1)
+        mask[yy, xx] = True
+        depth = self.lingbot_object_depth_m[mask]
+        if self.lingbot_confidence is not None:
+            conf = self.lingbot_confidence[mask]
+            conf_thr = float(getattr(self.args, "lingbot_object_confidence_threshold", 0.0))
+            if conf_thr > 0:
+                depth = depth[conf >= conf_thr]
+        depth = depth[np.isfinite(depth)]
+        depth = depth[(depth > 0.05) & (depth < float(self.args.max_depth))]
+        if len(depth) == 0:
+            return None
+        object_scale = float(getattr(self.args, "lingbot_object_depth_scale", 0.65))
+        depth_m = float(np.median(depth)) * object_scale
+        depth_cm = depth_m * 100.0
+        if getattr(self.args, "lingbot_object_goal_log", False):
+            message = (
+                "[LingBotObjectGoal] step={} count={} bbox={} depth_m={:.3f} "
+                "mask_px={} conf_thr={:.2f}"
+            ).format(
+                getattr(self.depth_client, "step", -1),
+                self.lingbot_target_observation_count,
+                whwh.tolist() if hasattr(whwh, "tolist") else whwh,
+                depth_m,
+                len(depth),
+                float(getattr(self.args, "lingbot_object_confidence_threshold", 0.0)),
+            )
+            print(message)
+            logging.info(message)
+        return np.ones_like(yy, dtype=np.float32) * (depth_cm / self.args.map_resolution)
 
     def instance_discriminator(self, planner_inputs, id_lo_whwh_speci):
         # Get pose prediction and global policy planning window
@@ -353,6 +422,7 @@ class UniGoal_Agent():
             planner_inputs['goal'] = np.zeros((self.local_width, self.local_height))
             planner_inputs['goal'][int(goal[0]), int(goal[1])] = 1
         elif planner_inputs['found_goal'] == 1:
+            self.lingbot_target_observation_count += 1
             id_lo_whwh_speci = sorted(id_lo_whwh_speci, 
                 key=lambda s: (s[2][2]-s[2][0])**2+(s[2][3]-s[2][1])**2, reverse=True)
             whwh = (id_lo_whwh_speci[0][2] / 4).astype(int)
