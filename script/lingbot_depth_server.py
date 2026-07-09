@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import sys
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +43,9 @@ class LingBotDepthRunner:
         self.device = torch.device(args.device)
         self.history = []
         self.input_hw = None
+        self.bootstrapped = False
+        self.stream_index = 0
+        self.lock = threading.Lock()
         self.dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 
         self.model = GCTStream(
@@ -65,32 +69,31 @@ class LingBotDepthRunner:
     def reset(self):
         self.history = []
         self.input_hw = None
+        self.bootstrapped = False
+        self.stream_index = 0
         if hasattr(self.model, "clean_kv_cache"):
             self.model.clean_kv_cache()
 
     def predict(self, image: Image.Image, output_height: int, output_width: int):
-        self.input_hw = (output_height, output_width)
-        tensor = _preprocess_image(image, self.args.image_size, self.args.patch_size)
-        self.history.append(tensor)
-        if self.history and self.history[0].shape != tensor.shape:
-            self.history = [tensor]
-        if len(self.history) > self.args.max_history:
-            self.history = self.history[-self.args.max_history:]
-
-        images = torch.stack(self.history).to(self.device)
-        scale_frames = min(max(1, self.args.num_scale_frames), images.shape[0])
         t0 = time.time()
-        with torch.no_grad(), torch.amp.autocast("cuda", dtype=self.dtype, enabled=self.device.type == "cuda"):
-            pred = self.model.inference_streaming(
-                images,
-                num_scale_frames=scale_frames,
-                keyframe_interval=self.args.keyframe_interval,
-                output_device=torch.device("cpu"),
-            )
-        depth = pred["depth"][0, -1, ..., 0].float().numpy()
-        conf = pred.get("depth_conf")
-        if conf is not None:
-            conf = conf[0, -1].float().numpy()
+        with self.lock:
+            self.input_hw = (output_height, output_width)
+            tensor = _preprocess_image(image, self.args.image_size, self.args.patch_size)
+            if self.history and self.history[0].shape != tensor.shape:
+                self.reset()
+            self.history.append(tensor)
+            if len(self.history) > self.args.max_history:
+                self.history = self.history[-self.args.max_history:]
+
+            if self.args.stateful_streaming and self.bootstrapped:
+                pred = self._predict_next_stream_frame(tensor)
+                source_mode = "stateful"
+            else:
+                pred = self._bootstrap_or_window_predict()
+                source_mode = "bootstrap" if self.args.stateful_streaming else "window"
+
+            depth, conf = self._extract_last_depth(pred)
+            del pred
 
         depth = np.asarray(
             Image.fromarray(depth.astype(np.float32), mode="F").resize(
@@ -113,11 +116,57 @@ class LingBotDepthRunner:
             "depth_shape": list(depth.shape),
             "confidence_b64": None if conf is None else _encode_float_array(conf),
             "confidence_shape": None if conf is None else list(conf.shape),
-            "source": "lingbot-map-sdpa" if self.args.use_sdpa else "lingbot-map-flashinfer",
-            "ready": len(self.history) >= self.args.num_scale_frames,
+            "source": f"lingbot-map-{source_mode}-{'sdpa' if self.args.use_sdpa else 'flashinfer'}",
+            "ready": self.bootstrapped if self.args.stateful_streaming else len(self.history) >= self.args.num_scale_frames,
             "history": len(self.history),
+            "stream_index": self.stream_index,
             "elapsed_sec": time.time() - t0,
         }
+
+    def _bootstrap_or_window_predict(self):
+        images = torch.stack(self.history).to(self.device)
+        scale_frames = min(max(1, self.args.num_scale_frames), images.shape[0])
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=self.dtype, enabled=self.device.type == "cuda"):
+            pred = self.model.inference_streaming(
+                images,
+                num_scale_frames=scale_frames,
+                keyframe_interval=self.args.keyframe_interval,
+                output_device=None,
+            )
+        if self.args.stateful_streaming and len(self.history) >= self.args.num_scale_frames:
+            self.bootstrapped = True
+            self.stream_index = len(self.history)
+        elif not self.args.stateful_streaming and hasattr(self.model, "clean_kv_cache"):
+            self.model.clean_kv_cache()
+        return pred
+
+    def _predict_next_stream_frame(self, tensor: torch.Tensor):
+        is_keyframe = (
+            self.args.keyframe_interval <= 1
+            or ((self.stream_index - self.args.num_scale_frames) % self.args.keyframe_interval == 0)
+        )
+        frame = tensor.to(self.device).unsqueeze(0)
+        if not is_keyframe and hasattr(self.model, "_set_skip_append"):
+            self.model._set_skip_append(True)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=self.dtype, enabled=self.device.type == "cuda"):
+            pred = self.model.forward(
+                frame,
+                num_frame_for_scale=self.args.num_scale_frames,
+                num_frame_per_block=1,
+                causal_inference=True,
+            )
+        if not is_keyframe and hasattr(self.model, "_set_skip_append"):
+            self.model._set_skip_append(False)
+        self.stream_index += 1
+        return pred
+
+    @staticmethod
+    def _extract_last_depth(pred):
+        depth = pred["depth"][0, -1, ..., 0].detach().float().cpu().numpy()
+        conf = pred.get("depth_conf")
+        if conf is not None:
+            conf = conf[0, -1].detach().float().cpu().numpy()
+        return depth, conf
 
 
 def _encode_float_array(array: np.ndarray) -> str:
@@ -182,6 +231,7 @@ def parse_args():
     parser.add_argument("--kv-cache-sliding-window", type=int, default=64)
     parser.add_argument("--keyframe-interval", type=int, default=1)
     parser.add_argument("--camera-num-iterations", type=int, default=1)
+    parser.add_argument("--stateful-streaming", action="store_true", default=True)
     parser.add_argument("--use-sdpa", action="store_true", default=True)
     return parser.parse_args()
 
