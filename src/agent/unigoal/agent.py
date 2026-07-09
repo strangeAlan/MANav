@@ -6,12 +6,14 @@ import os
 import re
 import cv2
 from PIL import Image
+import skimage.draw
 import skimage.morphology
 from skimage.draw import line_aa, line
 import numpy as np
 import torch
 from torchvision import transforms
 
+from configs.categories import name2index
 from src.utils.fmm.fmm_planner_policy import FMMPlanner
 import src.utils.fmm.pose_utils as pu
 from src.utils.visualization.semantic_prediction import SemanticPredMaskRCNN
@@ -80,6 +82,8 @@ class UniGoal_Agent():
         self.forbidden_temp_goal = []
         self.flag = 0
         self.goal_instance_whwh = None
+        self.last_iin_visual_fallback_step = -1
+        self.last_detection_debug_step = -1
         # define untraversible area of the goal: 0 means area can be goals, 1 means cannot be
         self.goal_map_mask = np.ones((self.global_width, self.global_height))
         self.pred_box = []
@@ -288,10 +292,19 @@ class UniGoal_Agent():
                 c = torch.index_select(matches[..., 0], dim=0, index=b.squeeze())
                 points0 = feats0['keypoints'][c]
                 if re_key2:
-                    return (points0.numpy(), feats1['keypoints'][c].numpy())
+                    return (
+                        points0.detach().cpu().numpy(),
+                        feats1['keypoints'][c].detach().cpu().numpy(),
+                    )
                 else:
-                    return points0.numpy()  
-            except:
+                    return points0.detach().cpu().numpy()
+            except Exception as exc:
+                if getattr(self.args, "lingbot_iin_visual_match_log", False):
+                    message = "[IINVisualMatch] step={} failed: {}".format(
+                        getattr(self.envs, "timestep", -1), exc
+                    )
+                    print(message)
+                    logging.info(message)
                 if re_key2:
                     # print(f'{self.env.rank}  {self.env.timestep}  h')
                     return (np.zeros((1, 2)), np.zeros((1, 2)))
@@ -336,6 +349,162 @@ class UniGoal_Agent():
         goal[1] = np.clip(goal[1], 0, 240-1).astype(int)
         goal_map[goal[0], goal[1]] = 1
         return goal_map
+
+    def _log_detection_debug(self, id_lo_whwh, id_lo_whwh_speci):
+        if not getattr(self.args, "lingbot_detection_debug", False):
+            return
+        interval = int(getattr(self.args, "lingbot_detection_log_interval", 20))
+        step = int(getattr(self.envs, "timestep", -1))
+        if interval > 0 and self.last_detection_debug_step >= 0:
+            if step - self.last_detection_debug_step < interval and len(id_lo_whwh_speci) == 0:
+                return
+        self.last_detection_debug_step = step
+
+        index2name = {v: k for k, v in name2index.items()}
+        counts = {}
+        areas = []
+        for item in id_lo_whwh:
+            label = int(item[0])
+            counts[label] = counts.get(label, 0) + 1
+            box = np.asarray(item[2])
+            area = max(0.0, float(box[2] - box[0])) * max(0.0, float(box[3] - box[1]))
+            areas.append((area, label))
+        areas = sorted(areas, reverse=True)[:5]
+        count_text = {
+            index2name.get(label, str(label)): count
+            for label, count in sorted(counts.items(), key=lambda kv: kv[0])
+        }
+        top_area_text = [
+            "{}:{:.0f}".format(index2name.get(label, str(label)), area)
+            for area, label in areas
+        ]
+        target_name = getattr(self.envs, "goal_name", "unknown")
+        message = (
+            "[DetectionDebug] step={} goal={}({}) detections={} target_hits={} "
+            "counts={} top_areas={}"
+        ).format(
+            step,
+            target_name,
+            getattr(self.envs, "gt_goal_idx", -1),
+            len(id_lo_whwh),
+            len(id_lo_whwh_speci),
+            count_text,
+            top_area_text,
+        )
+        print(message)
+        logging.info(message)
+
+    def _compute_lingbot_iin_visual_goal_map(self, start, start_o):
+        if self.lingbot_object_depth_m is None:
+            return None, None
+        points0, _ = self.local_feature_match_lightglue(re_key2=True)
+        match_points = int(points0.shape[0])
+        match_thr = int(getattr(self.args, "lingbot_iin_visual_fallback_match_threshold", 80))
+        if match_points < match_thr:
+            if getattr(self.args, "lingbot_iin_visual_match_log", False):
+                message = "[IINVisualFallback] step={} matches={} below_thr={}".format(
+                    getattr(self.envs, "timestep", -1), match_points, match_thr
+                )
+                print(message)
+                logging.info(message)
+            return None, match_points
+
+        raw_h, raw_w = self.raw_obs.shape[:2]
+        finite_points = points0[np.all(np.isfinite(points0), axis=1)]
+        if len(finite_points) == 0:
+            return None, match_points
+        cx, cy = np.median(finite_points, axis=0)
+        cx = float(np.clip(cx, 0, raw_w - 1))
+        cy = float(np.clip(cy, 0, raw_h - 1))
+
+        depth_h, depth_w = self.lingbot_object_depth_m.shape[:2]
+        dx = int(np.clip(round(cx * depth_w / max(raw_w, 1)), 0, depth_w - 1))
+        dy = int(np.clip(round(cy * depth_h / max(raw_h, 1)), 0, depth_h - 1))
+        radius = int(getattr(self.args, "lingbot_iin_visual_goal_radius_px", 32))
+        rx = max(1, int(radius * depth_w / max(raw_w, 1)))
+        ry = max(1, int(radius * depth_h / max(raw_h, 1)))
+        y1, y2 = max(0, dy - ry), min(depth_h, dy + ry + 1)
+        x1, x2 = max(0, dx - rx), min(depth_w, dx + rx + 1)
+        depth = self.lingbot_object_depth_m[y1:y2, x1:x2]
+        if self.lingbot_confidence is not None:
+            conf = self.lingbot_confidence[y1:y2, x1:x2]
+            conf_thr = float(getattr(self.args, "lingbot_object_confidence_threshold", 0.0))
+            if conf_thr > 0:
+                depth = depth[conf >= conf_thr]
+        depth = depth[np.isfinite(depth)]
+        depth = depth[(depth > 0.05) & (depth < float(self.args.max_depth))]
+        if len(depth) == 0:
+            return None, match_points
+
+        object_scale = float(getattr(self.args, "lingbot_object_depth_scale", 0.65))
+        depth_m = float(np.median(depth)) * object_scale
+        goal_dis = depth_m * 100.0 / self.args.map_resolution
+        goal_angle = -self.args.hfov / 2 * (cx - raw_w / 2) / (raw_w / 2)
+        goal = [
+            start[0] + goal_dis * np.sin(np.deg2rad(start_o + goal_angle)),
+            start[1] + goal_dis * np.cos(np.deg2rad(start_o + goal_angle)),
+        ]
+        goal = pu.threshold_poses(goal, (self.local_width, self.local_height))
+        goal_map = np.zeros((self.local_width, self.local_height))
+        rr, cc = skimage.draw.ellipse(
+            int(goal[0]),
+            int(goal[1]),
+            int(getattr(self.args, "lingbot_iin_visual_goal_radius_cells", 8)),
+            int(getattr(self.args, "lingbot_iin_visual_goal_radius_cells", 8)),
+            shape=goal_map.shape,
+        )
+        goal_map[rr, cc] = 1
+
+        if getattr(self.args, "lingbot_iin_visual_fallback_log", False):
+            message = (
+                "[IINVisualFallback] step={} matches={} center=({:.1f},{:.1f}) "
+                "depth_m={:.3f} goal=({}, {})"
+            ).format(
+                getattr(self.envs, "timestep", -1),
+                match_points,
+                cx,
+                cy,
+                depth_m,
+                int(goal[0]),
+                int(goal[1]),
+            )
+            print(message)
+            logging.info(message)
+        return goal_map, match_points
+
+    def _maybe_apply_iin_visual_fallback(self, planner_inputs, start, start_o, map_pred, planning_window):
+        if not getattr(self.args, "lingbot_iin_visual_fallback", False):
+            return False
+        if self.args.goal_type != 'ins-image':
+            return False
+        step = int(getattr(self.envs, "timestep", -1))
+        interval = int(getattr(self.args, "lingbot_iin_visual_fallback_interval", 10))
+        if interval > 0 and self.last_iin_visual_fallback_step >= 0:
+            if step - self.last_iin_visual_fallback_step < interval:
+                return False
+        self.last_iin_visual_fallback_step = step
+
+        goal_map, match_points = self._compute_lingbot_iin_visual_goal_map(start, start_o)
+        if goal_map is None or not np.any(goal_map > 0):
+            return False
+        goal_dis = self.compute_temp_goal_distance(map_pred, goal_map, start, planning_window)
+        if goal_dis is None:
+            selem = skimage.morphology.disk(3)
+            blocked_goal = skimage.morphology.dilation(goal_map, selem)
+            gx1, gx2, gy1, gy2 = planning_window
+            self.goal_map_mask[gx1:gx2, gy1:gy2][blocked_goal > 0] = 0
+            return False
+
+        gx1, gx2, gy1, gy2 = planning_window
+        new_goal_map = goal_map * self.goal_map_mask[gx1:gx2, gy1:gy2]
+        if not np.any(new_goal_map > 0):
+            return False
+        planner_inputs['found_goal'] = 0
+        planner_inputs['goal'] = new_goal_map
+        temp_goal = np.zeros((self.global_width, self.global_height))
+        temp_goal[gx1:gx2, gy1:gy2] = new_goal_map
+        self.temp_goal = temp_goal
+        return True
 
     def _compute_lingbot_object_goal_distance(self, semantic_mask, whwh):
         if self.lingbot_object_depth_m is None:
@@ -498,6 +667,11 @@ class UniGoal_Agent():
 
         else:
             planner_inputs['goal'] = planner_inputs['exp_goal']
+            if self.temp_goal is None:
+                if self._maybe_apply_iin_visual_fallback(
+                    planner_inputs, start, start_o, map_pred, planning_window
+                ):
+                    return planner_inputs
             if self.temp_goal is not None:  
                 goal_map = pu.threshold_pose_map(self.temp_goal, gx1, gx2, gy1, gy2)
                 goal_dis = self.compute_temp_goal_distance(map_pred, goal_map, start, planning_window)
@@ -564,6 +738,7 @@ class UniGoal_Agent():
 
 
         agent_input["found_goal"] = (id_lo_whwh_speci != [])
+        self._log_detection_debug(id_lo_whwh, id_lo_whwh_speci)
 
         self.instance_discriminator(agent_input, id_lo_whwh_speci)
 
