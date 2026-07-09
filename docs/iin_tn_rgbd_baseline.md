@@ -38,7 +38,16 @@ QWEN_GPU=1 start_local_vlm.sh
 ```
 
 The run scripts also check `http://127.0.0.1:18080/health` and start Qwen in
-background mode if it is not already healthy.
+background mode if it is not already healthy. If a run script starts Qwen, it
+also stops Qwen when the run exits. If Qwen was already running before the run
+script started, the script leaves it running.
+
+Stop Qwen manually:
+
+```bash
+cd /home/hsy/UniGoal
+./script/stop_local_vlm.sh
+```
 
 ## One-Episode Checks
 

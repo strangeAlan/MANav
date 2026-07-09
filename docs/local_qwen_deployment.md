@@ -7,6 +7,7 @@ VLM without an OpenAI-compatible adapter.
 
 - `script/qwen_backend_server.py`: local Transformers Qwen HTTP server.
 - `script/start_local_vlm.sh`: starts the local server.
+- `script/stop_local_vlm.sh`: stops a background local server.
 - `script/run_local_qwen_smoke.sh`: runs a UniGoal smoke test with local Qwen.
 - `configs/config_local_qwen.yaml`: UniGoal config that points to local Qwen.
 - `src/utils/llm.py`: routes `local_qwen` LLM/VLM calls to `/generate`.
@@ -55,6 +56,13 @@ Health check:
 curl --noproxy '*' http://127.0.0.1:18080/health
 ```
 
+Stop a background server:
+
+```bash
+cd /home/hsy/UniGoal
+./script/stop_local_vlm.sh
+```
+
 ## Run UniGoal Smoke Test
 
 ```bash
@@ -83,3 +91,6 @@ outputs/experiments/local_qwen_smoke/log/total.json
   `/home/hsy/miniconda3/envs/unigoal-habitat`.
 - HTTP proxy environment variables are unset inside the scripts for localhost
   calls.
+- `run_iin.sh` and `run_tn.sh` follow "who starts it stops it": if a run script
+  starts Qwen itself, it stops Qwen on exit. If Qwen was already running before
+  the run script started, the script leaves it running.

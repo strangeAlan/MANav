@@ -11,6 +11,8 @@ EPISODE_ID="${EPISODE_ID:-0}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
 CONFIG_FILE="${CONFIG_FILE:-configs/config_local_qwen.yaml}"
 EXPERIMENT_ID="${EXPERIMENT_ID:-tn_rgbd_local_qwen}"
+QWEN_PORT="${QWEN_PORT:-18080}"
+QWEN_STARTED_BY_RUN=0
 
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
@@ -19,9 +21,10 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export CUDA_HOME="${CUDA_HOME:-${UNIGOAL_ENV}}"
 export LD_LIBRARY_PATH="${UNIGOAL_ENV}/lib:${UNIGOAL_ENV}/lib/python3.8/site-packages/torch/lib:${LD_LIBRARY_PATH:-}"
 
-if ! curl -fsS --max-time 2 "http://127.0.0.1:18080/health" >/dev/null 2>&1; then
+if ! curl -fsS --max-time 2 "http://127.0.0.1:${QWEN_PORT}/health" >/dev/null 2>&1; then
   echo "[run_tn] local Qwen is not healthy; starting it first"
-  RUN_IN_BACKGROUND=1 script/start_local_vlm.sh
+  QWEN_STARTED_BY_RUN=1
+  RUN_IN_BACKGROUND=1 QWEN_PORT="${QWEN_PORT}" script/start_local_vlm.sh
 fi
 
 RUN_CONFIG="${CONFIG_FILE}"
@@ -50,6 +53,10 @@ fi
 cleanup() {
   if [[ "${RUN_CONFIG}" == /tmp/unigoal_tn_* && -f "${RUN_CONFIG}" ]]; then
     rm -f "${RUN_CONFIG}"
+  fi
+  if [[ "${QWEN_STARTED_BY_RUN}" == "1" ]]; then
+    echo "[run_tn] stopping local Qwen started by this run"
+    QWEN_PORT="${QWEN_PORT}" script/stop_local_vlm.sh || true
   fi
 }
 trap cleanup EXIT
