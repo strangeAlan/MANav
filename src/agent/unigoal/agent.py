@@ -1,5 +1,6 @@
 import warnings
 warnings.filterwarnings('ignore')
+import logging
 import math
 import os
 import re
@@ -94,7 +95,12 @@ class UniGoal_Agent():
                 min_depth_m=float(getattr(args, "lingbot_min_depth_m", 0.2)),
                 max_depth_m=float(getattr(args, "lingbot_max_depth_m", args.max_depth)),
                 scale=float(getattr(args, "lingbot_depth_scale", 1.0)),
+                confidence_threshold=float(getattr(args, "lingbot_confidence_threshold", 0.0)),
+                invalid_fill_m=float(getattr(args, "lingbot_invalid_fill_m", args.max_depth)),
+                max_jump_m=float(getattr(args, "lingbot_max_jump_m", 0.0)),
+                temporal_alpha=float(getattr(args, "lingbot_temporal_alpha", 0.0)),
             )
+            self.depth_log_interval = int(getattr(args, "lingbot_log_interval", 0))
 
     def _online_depth_obs(self, obs):
         if self.depth_client is None:
@@ -106,6 +112,27 @@ class UniGoal_Agent():
             min_d=self.args.min_depth,
             max_d=self.args.max_depth,
         )
+        if self.depth_log_interval > 0 and self.depth_client.step % self.depth_log_interval == 0:
+            stats = result.stats
+            depth_norm = depth_obs[:, :, 0]
+            message = (
+                "[LingBotDepth] step={step} ready={ready} "
+                "raw_mean={raw_mean:.3f}m depth_mean={depth_mean:.3f}m "
+                "depth_min={depth_min:.3f}m depth_max={depth_max:.3f}m "
+                "conf_mean={conf_mean:.3f} invalid={invalid:.3f} norm_mean={norm_mean:.4f}"
+            ).format(
+                step=self.depth_client.step,
+                ready=result.ready,
+                raw_mean=stats.get("raw_mean_m", float("nan")),
+                depth_mean=stats.get("depth_mean_m", float("nan")),
+                depth_min=stats.get("depth_min_m", float("nan")),
+                depth_max=stats.get("depth_max_m", float("nan")),
+                conf_mean=stats.get("conf_mean", float("nan")),
+                invalid=stats.get("invalid_ratio", float("nan")),
+                norm_mean=float(np.nanmean(depth_norm)),
+            )
+            print(message)
+            logging.info(message)
         return depth_obs.astype(np.float32)
 
     def reset(self):

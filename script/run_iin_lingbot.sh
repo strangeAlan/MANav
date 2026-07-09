@@ -8,6 +8,8 @@ cd "${UNIGOAL_ROOT}"
 LINGBOT_PORT="${LINGBOT_PORT:-18180}"
 LINGBOT_STARTED_BY_RUN=0
 
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
 cleanup() {
   if [[ "${LINGBOT_STARTED_BY_RUN}" == "1" ]]; then
     echo "[run_iin_lingbot] stopping LingBot depth server started by this run"

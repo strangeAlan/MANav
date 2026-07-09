@@ -76,4 +76,10 @@ lingbot_depth_url: "http://127.0.0.1:18180"
 lingbot_depth_timeout: 300.0
 lingbot_min_depth_m: 0.2
 lingbot_max_depth_m: 30.0
-lingbot_depth_scale: 1.0
+lingbot_depth_scale: 2.0
+lingbot_confidence_threshold: 1.5
+lingbot_invalid_fill_m: 30.0
+lingbot_max_jump_m: 0.0
+lingbot_temporal_alpha: 0.0
+lingbot_log_interval: 10
+lingbot_map_debug: true

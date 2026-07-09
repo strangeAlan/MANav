@@ -68,10 +68,10 @@ class GroupNode():
         self.center_node = None
         self.nodes = []
         self.edges = set()
-    
+
     def __lt__(self, other):
         return self.corr_score < other.corr_score
-    
+
     def get_graph(self):
         self.center = np.array([node.center for node in self.nodes]).mean(axis=0)
         min_distance = np.inf
@@ -109,7 +109,7 @@ class ObjectNode():
 
     def remove_edge(self, edge):
         self.edges.discard(edge)
-    
+
     def set_caption(self, new_caption):
         for edge in list(self.edges):
             edge.delete()
@@ -890,6 +890,20 @@ Please provide the relationship you can determine from the image.
 
         if not(traversible[start[0], start[1]]):
             print("Not traversible, step is  ", self.navigate_steps)
+            if getattr(self.args, "lingbot_map_debug", False):
+                r0, r1 = max(start[0] - 5, 0), min(start[0] + 6, traversible.shape[0])
+                c0, c1 = max(start[1] - 5, 0), min(start[1] + 6, traversible.shape[1])
+                local_free = traversible[r0:r1, c0:c1]
+                grid_window = grid[r0:r1, c0:c1]
+                print(
+                    "[LingBotMapDebug] start={} grid_shape={} "
+                    "local_free_ratio={:.3f} local_obstacle_ratio={:.3f}".format(
+                        start,
+                        grid.shape,
+                        float(local_free.mean()) if local_free.size else 0.0,
+                        float((grid_window > 0).mean()) if grid_window.size else 0.0,
+                    )
+                )
 
         # obstacle dilation do not dilate collision
         traversible = 1 - traversible
@@ -929,11 +943,10 @@ Please provide the relationship you can determine from the image.
         response_3 = self.llm(prompt=prompt)
         corr_score = self.text2value(response_3)
         return corr_score
-    
+
     def text2value(self, text):
         try:
             value = float(text)
         except:
             value = 0
         return value
-    
